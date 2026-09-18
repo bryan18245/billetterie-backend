@@ -4,14 +4,13 @@ namespace App\Services;
 
 use App\Models\Commande;
 use App\Models\SuiviCommande;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class SuiviCommandeService
 {
     /**
      * Créer un suivi pour une commande.
-     * N suivis actifs en parallèle : les anciens restent valides.
-     * Expiration : 1 semaine.
      */
     public function creer(Commande $commande, string $canal = 'whatsapp'): SuiviCommande
     {
@@ -27,7 +26,7 @@ class SuiviCommandeService
     }
 
     /**
-     * Retrouver un suivi via son token.
+     * Retrouve un suivi via son token.
      */
     public function trouverParToken(string $token): ?SuiviCommande
     {
@@ -47,7 +46,7 @@ class SuiviCommandeService
     }
 
     /**
-     * Envoyer le lien (token) + code par WhatsApp.
+     * Envoie un message WhatsApp via l'API NoraSend.
      */
     public function envoyerParWhatsApp(Commande $commande, SuiviCommande $suivi): bool
     {
@@ -56,65 +55,99 @@ class SuiviCommandeService
         $message = "Bonjour {$commande->client->nom},\n\n"
             . "Votre commande *{$commande->reference_unique}* est bien enregistrée.\n"
             . "Montant : " . number_format($commande->montant_total, 0, ',', ' ') . " FCFA\n\n"
-            . "🔗 Lien de suivi :\n{$lien}\n\n"
-            . "🔐 Code de suivi : *{$suivi->code}* (6 chiffres)\n\n"
+            . "Lien de suivi :\n{$lien}\n\n"
+            . "Code de suivi : *{$suivi->code}* (6 chiffres)\n\n"
             . "Conservez ce message : vous pourrez suivre votre commande à tout moment "
             . "avec ce lien et ce code, jusqu'au "
             . $suivi->expires_at->format('d/m/Y') . ".\n\n"
-            . "Merci pour votre confiance 🙏";
+            . "Merci pour votre confiance ";
 
-        // === DEV ===
-        Log::info('📱 WhatsApp de suivi', [
-            'telephone' => $commande->client->telephone,
-            'message'   => $message,
-        ]);
+        // Normalisation du numéro pour l'API
+        $telephone = $this->normaliserTelephone($commande->client->telephone);
 
-        // === PROD : brancher un provider (Twilio, Meta, etc.) ===
-
-        return true;
-    }
-
-    /**
-     * Envoyer le lien + code par email (optionnel).
-     */
-    public function envoyerParEmail(Commande $commande, SuiviCommande $suivi): bool
-    {
-        if (!$commande->client->email) {
+        if (!$telephone) {
+            Log::warning('Numéro WhatsApp invalide', [
+                'commande'  => $commande->reference_unique,
+                'telephone' => $commande->client->telephone,
+            ]);
             return false;
         }
 
-        $lien = route('commande.suivi.token', $suivi->token);
+        try {
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . config('services.norasend.token'),
+                'Content-Type'  => 'application/json',
+            ])->post(config('services.norasend.url'), [
+                'to'   => $telephone,
+                'type' => 'text',
+                'text' => $message,
+            ]);
 
-        Log::info('📧 Email de suivi', [
-            'email' => $commande->client->email,
-            'lien'  => $lien,
-            'code'  => $suivi->code,
-        ]);
+            if ($response->successful()) {
+                Log::info(' WhatsApp envoyé via NoraSend', [
+                    'telephone' => $telephone,
+                    'reference' => $commande->reference_unique,
+                ]);
+                return true;
+            }
 
-        return true;
-    }
+            Log::error('❌ Échec NoraSend', [
+                'telephone' => $telephone,
+                'status'    => $response->status(),
+                'body'      => $response->body(),
+            ]);
 
-    /**
-     * Vérifier un code saisi.
-     * Le code reste valide jusqu'à expiration.
-     */
-    public function verifierCode(SuiviCommande $suivi, string $codeSaisi): bool
-    {
-        if (!$suivi->estValide()) {
+            return false;
+        } catch (\Exception $e) {
+            Log::error('❌ Exception NoraSend', [
+                'telephone' => $telephone,
+                'message'   => $e->getMessage(),
+            ]);
+
             return false;
         }
-
-        $ok = trim($codeSaisi) === (string) $suivi->code;
-
-        if (!$ok) {
-            $suivi->increment('tentatives');
-        }
-
-        return $ok;
     }
 
     /**
-     * Renvoyer un nouveau code (nouveau suivi).
+     * Normalise un numéro pour l'API NoraSend.
+     *
+     * Format attendu : 225 + 8 chiffres (sans le préfixe 01/05/07).
+     * Exemple : "2250102444595" → "22502444595"
+     */
+    protected function normaliserTelephone(?string $telephone): ?string
+    {
+        if (!$telephone) {
+            return null;
+        }
+
+        // 1. Retire tout sauf les chiffres
+        $tel = preg_replace('/\D/', '', $telephone);
+
+        // 2. Retire le préfixe 225 s'il existe
+        if (str_starts_with($tel, '225')) {
+            $tel = substr($tel, 3);
+        }
+
+        // 3. Le numéro local doit faire 10 chiffres (ex: 0102444595)
+        if (strlen($tel) !== 10) {
+            return null;
+        }
+
+        // 4. Vérifie que le préfixe est 01, 05 ou 07
+        $prefixe = substr($tel, 0, 2);
+        if (!in_array($prefixe, ['01', '05', '07'])) {
+            return null;
+        }
+
+        // 5. Retire les 2 premiers chiffres (le préfixe)
+        $tel = substr($tel, 2);  // → 8 chiffres
+
+        // 6. Retourne 225 + 8 chiffres
+        return '225' . $tel;
+    }
+
+    /**
+     * Renvoyer un nouveau code.
      */
     public function renvoyer(Commande $commande, string $canal = 'whatsapp'): SuiviCommande
     {
@@ -122,8 +155,6 @@ class SuiviCommandeService
 
         if ($canal === 'whatsapp') {
             $this->envoyerParWhatsApp($commande, $suivi);
-        } else {
-            $this->envoyerParEmail($commande, $suivi);
         }
 
         return $suivi;

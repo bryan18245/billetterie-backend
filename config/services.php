@@ -39,5 +39,9 @@ return [
         'secret_key' => env('SASPAY_SECRET_KEY'),
         'webhook_secret' => env('SASPAY_WEBHOOK_SECRET'),
     ],
+    'norasend' => [
+        'url'   => env('NORASEND_API_URL', 'https://api.norasend.com/api/v1/whatsapp/send'),
+        'token' => env('NORASEND_API_TOKEN'),
+    ],
 
 ];
