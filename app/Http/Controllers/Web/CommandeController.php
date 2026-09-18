@@ -81,21 +81,26 @@ class CommandeController extends Controller
         }
 
         return DB::transaction(function () use ($request, $panier) {
-            // 1. Client
-            $client = Client::firstOrCreate(
-                ['telephone' => $request->telephone],
-                [
+            // 1. Client — on le cherche par téléphone
+            $client = Client::where('telephone', $request->telephone)->first();
+
+            if ($client) {
+                // Client existant → on met à jour ses infos
+                $client->update([
+                    'nom'       => $request->nom,
+                    'email'     => $request->email ?? $client->email,
+                    'telephone' => $request->telephone,
+                ]);
+            } else {
+                // Nouveau client
+                $client = Client::create([
                     'nom'       => $request->nom,
                     'email'     => $request->email,
+                    'telephone' => $request->telephone,
                     'est_guest' => !Auth::check(),
                     'user_id'   => Auth::id(),
-                ]
-            );
-
-            $client->update([
-                'nom'   => $request->nom,
-                'email' => $request->email ?? $client->email,
-            ]);
+                ]);
+            }
 
             // 2. Adresse
             $adresse = $client->adresses()->create([
@@ -146,7 +151,7 @@ class CommandeController extends Controller
             // 6. Suivi
             $suivi = $this->suiviService->creer($commande, 'whatsapp');
 
-            // 7. WhatsApp
+            // 7. WhatsApp — envoi au numéro du client
             $this->suiviService->envoyerParWhatsApp($commande, $suivi);
 
             // 8. Vider panier

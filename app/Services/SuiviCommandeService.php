@@ -60,13 +60,13 @@ class SuiviCommandeService
             . "Conservez ce message : vous pourrez suivre votre commande à tout moment "
             . "avec ce lien et ce code, jusqu'au "
             . $suivi->expires_at->format('d/m/Y') . ".\n\n"
-            . "Merci pour votre confiance ";
+            . "Merci pour votre confiance 🙏";
 
         // Normalisation du numéro pour l'API
         $telephone = $this->normaliserTelephone($commande->client->telephone);
 
         if (!$telephone) {
-            Log::warning('Numéro WhatsApp invalide', [
+            Log::warning('❌ Numéro WhatsApp invalide', [
                 'commande'  => $commande->reference_unique,
                 'telephone' => $commande->client->telephone,
             ]);
@@ -84,7 +84,7 @@ class SuiviCommandeService
             ]);
 
             if ($response->successful()) {
-                Log::info(' WhatsApp envoyé via NoraSend', [
+                Log::info('✅ WhatsApp envoyé via NoraSend', [
                     'telephone' => $telephone,
                     'reference' => $commande->reference_unique,
                 ]);
@@ -145,9 +145,9 @@ class SuiviCommandeService
         // 6. Retourne 225 + 8 chiffres
         return '225' . $tel;
     }
+
     /**
      * Vérifie un code saisi par l'utilisateur.
-     * Incrémente les tentatives en cas d'échec.
      */
     public function verifierCode(SuiviCommande $suivi, string $codeSaisi): bool
     {
@@ -163,6 +163,7 @@ class SuiviCommandeService
 
         return $ok;
     }
+
     /**
      * Renvoyer un nouveau code.
      */
