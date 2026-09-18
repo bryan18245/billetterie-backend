@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Client;
 use App\Models\Commande;
 use App\Models\LigneCommande;
+use App\Models\Produit;
 use App\Services\SuiviCommandeService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -14,6 +15,9 @@ use Illuminate\Support\Str;
 
 class CommandeController extends Controller
 {
+    /**
+     * @var SuiviCommandeService
+     */
     protected SuiviCommandeService $suiviService;
 
     public function __construct(SuiviCommandeService $suiviService)
@@ -60,6 +64,22 @@ class CommandeController extends Controller
             return redirect()->route('panier.index')->with('error', 'Votre panier est vide.');
         }
 
+        // VÉRIFICATION DU STOCK AVANT LA TRANSACTION
+        foreach ($panier as $item) {
+            $produit = Produit::find($item['produit_id']);
+
+            if (!$produit || !$produit->actif) {
+                return redirect()->route('panier.index')
+                    ->with('error', "Le produit « {$item['nom']} » n'est plus disponible.");
+            }
+
+            if ($produit->stock < $item['quantite']) {
+                return redirect()->route('panier.index')
+                    ->with('error', "Stock insuffisant pour « {$item['nom']} ». " .
+                        "Seulement {$produit->stock} disponible(s).");
+            }
+        }
+
         return DB::transaction(function () use ($request, $panier) {
             // 1. Client
             $client = Client::firstOrCreate(
@@ -102,7 +122,7 @@ class CommandeController extends Controller
                 'date_commande'    => now(),
             ]);
 
-            // 5. Lignes
+            // 5. Lignes + décrémentation du stock
             foreach ($panier as $item) {
                 LigneCommande::create([
                     'commande_id'      => $commande->id,
@@ -113,6 +133,14 @@ class CommandeController extends Controller
                     'quantite'         => $item['quantite'],
                     'sous_total'       => $item['prix'] * $item['quantite'],
                 ]);
+
+                // Décrémente le stock + incrémente les ventes
+                $produit = Produit::find($item['produit_id']);
+
+                if ($produit) {
+                    $produit->decrement('stock', $item['quantite']);
+                    $produit->increment('nb_ventes', $item['quantite']);
+                }
             }
 
             // 6. Suivi
@@ -235,7 +263,6 @@ class CommandeController extends Controller
             return view('commande-suivi-expire', compact('suivi'));
         }
 
-        // Charge la commande avec les relations nécessaires
         $commande = $suivi->commande;
 
         $commande->load([

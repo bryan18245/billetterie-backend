@@ -145,7 +145,24 @@ class SuiviCommandeService
         // 6. Retourne 225 + 8 chiffres
         return '225' . $tel;
     }
+    /**
+     * Vérifie un code saisi par l'utilisateur.
+     * Incrémente les tentatives en cas d'échec.
+     */
+    public function verifierCode(SuiviCommande $suivi, string $codeSaisi): bool
+    {
+        if (!$suivi->estValide()) {
+            return false;
+        }
 
+        $ok = trim($codeSaisi) === (string) $suivi->code;
+
+        if (!$ok) {
+            $suivi->increment('tentatives');
+        }
+
+        return $ok;
+    }
     /**
      * Renvoyer un nouveau code.
      */
